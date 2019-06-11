@@ -1,6 +1,6 @@
 # Clojure CAS
 
-Now solves [these](https://www.khanacademy.org/math/algebra/one-variable-linear-equations/alg1-one-step-mult-div-equations/e/one-step-mult-div-equations-2?modal=1) one-step multiplication & division equations with fractions and decimals.
+Now solves [these](https://www.khanacademy.org/math/algebra/one-variable-linear-equations/alg1-two-steps-equations-intro/e/linear_equations_2?modal=1) two-step equations.
 
 ```edn id=2be60a04-27e9-434f-b34e-05e2ca86fd9e no-exec
 {:deps
@@ -21,10 +21,11 @@ Now solves [these](https://www.khanacademy.org/math/algebra/one-variable-linear-
    right = expr+
    <expr> = term | (expr '+' term) | (expr '-' term)
    <term> = factor | (term factor)
-   <factor> = number | variable | ratio | <'('> expr <')'>
+   <factor> = ('-'? number) | variable | ratio | parens
+   parens = <'('> expr <')'>
    number = (#'[0-9]+' #'[.]' #'[0-9]+') | #'[0-9]+'
    variable = #'[A-Za-z]+'
-   ratio = (number | variable) '/' (number | variable)"))
+   ratio = (number | variable) '/' '-'? (number | variable)"))
 
 (defn left [eq] (vec (rest (first (equation eq)))))
 (defn right [eq] (vec (rest (last (equation eq)))))
@@ -39,8 +40,24 @@ Now solves [these](https://www.khanacademy.org/math/algebra/one-variable-linear-
 
 (defn expr-ast [expr]
   (match expr
+         ["-" [:number n]] (- (parse-num n))
          [[:number n1] "+" [:number n2]] [(parse-num n1) (parse-num n2)]
          [[:number n1] "-" [:number n2]] [(parse-num n1) (- (parse-num n2))]
+         [[:number n1] [:parens [:variable x] "+" [:number n2]]]
+         {:multiplier (parse-num n1)
+          :expr [{:variable x :multiplier 1} (parse-num n2)]}
+         [[:number n1] [:parens [:variable x] "-" [:number n2]]]
+         {:multiplier (parse-num n1)
+          :expr [{:variable x :multiplier 1} (- (parse-num n2))]}
+         ["-" [:number n1] [:parens [:variable x] "-" [:number n2]]]
+         {:multiplier (- (parse-num n1))
+          :expr [{:variable x :multiplier 1} (- (parse-num n2))]}
+         [[:ratio [:variable x] "/" [:number n1]] "+" [:number n2]]
+         [{:numer x :denom (parse-num n1)} (parse-num n2)]
+         [[:ratio [:variable x] "/" [:number n1]] "-" [:number n2]]
+         [{:numer x :denom (parse-num n1)} (- (parse-num n2))]
+         [[:ratio [:variable x] "/" "-" [:number n1]] "+" [:number n2]]
+         [{:numer x :denom (- (parse-num n1))} (parse-num n2)]
          [[:ratio [:number n1] "/" [:number n2]] "+" [:variable x]]
          [(parse-num (str n1 "/" n2)) {:variable x :multiplier 1}]
          [[:ratio [:number n1] "/" [:number n2]] [:variable x]]
@@ -67,6 +84,12 @@ Now solves [these](https://www.khanacademy.org/math/algebra/one-variable-linear-
          [{:variable x :multiplier 1} (- (parse-num (str n1 "/" n2)))]
          [[:number n] "-" [:variable x]]
          [(parse-num n) {:variable x :multiplier -1}]
+         [[:number n1] [:variable x] "+" [:number n2]]
+         [{:multiplier (parse-num n1) :variable x} (parse-num n2)]
+         ["-" [:number n1] [:variable x] "+" [:number n2]]
+         [{:multiplier (- (parse-num n1)) :variable x} (parse-num n2)]
+         [[:number n1] [:variable x] "-" [:number n2]]
+         [{:multiplier (parse-num n1) :variable x} (- (parse-num n2))]
          [[:number n] [:variable x]]
          {:variable x :multiplier (parse-num n)}
          [[:number d1 "." d2]] (parse-num (str d1 "." d2))
@@ -75,35 +98,46 @@ Now solves [these](https://www.khanacademy.org/math/algebra/one-variable-linear-
          {:numer x :denom (parse-num n)}
          [[:ratio [:number n1] "/" [:number n2]]]
          (parse-num (str n1 "/" n2))
-         :else "unparsed"))
+         :else "unrecognized pattern"))
 
 (defn eq-ast [eq] {:left (expr-ast (left eq)) :right (expr-ast (right eq))})
 
-(eq-ast "6.4=0.8m")
+(eq-ast "-11b+7=40")
 ```
 
 ```clojure id=2ff45c01-2fef-45f8-a70d-7d6b02d1b453
-(defn operator [s]
-  (if (= 3 (count (left s)))
-    (second (left s))
-    (second (right s))))
-
 (defn round [n]
   (if (float? n) (float (/ (Math/round (* n 100)) 100)) n))
-
 (defn number [expr]
-  (if (number? (first expr))
-    (first expr)
-    (recur (rest expr))))
-
+  (if (number? (first expr)) (first expr) (recur (rest expr))))
 (defn variable [expr]
-  (if (map? (first expr))
-    (:variable (first expr))
-    (recur (rest expr))))
+  (if (map? (first expr)) (:variable (first expr)) (recur (rest expr))))
+(defn multiplier [expr]
+  (if (map? (first expr)) (:multiplier (first expr)) (recur (rest expr))))
+(defn numer [expr]
+  (if (map? (first expr)) (:numer (first expr)) (recur (rest expr))))
+(defn denom [expr]
+  (if (map? (first expr)) (:denom (first expr)) (recur (rest expr))))
 
 (defn solve [s]
   (let [l (:left (eq-ast s)) r (:right (eq-ast s))]
     (cond
+      (and (number? r) (vector? l))
+      (cond
+        (variable l)
+        (str (variable l) "=" (/ (- r (number l)) (multiplier l)))
+        (numer l)
+        (str (numer l) "=" (* (- r (number l)) (denom l))))
+      (and (number? l) (vector? r))
+      (cond
+        (variable r)
+        (str (variable r) "=" (/ (- l (number r)) (multiplier r)))
+        (numer r)
+        (str (numer r) "=" (* (- l (number r)) (denom r))))
+      (and (number? r) (:expr l))
+      (str (variable (:expr l)) "=" (- (/ r (:multiplier l)) (number (:expr l))))
+      (and (number? l) (:expr r))
+      (str (variable (:expr r)) "=" (- (/ l (:multiplier r)) (number (:expr r))))
       (and (number? l) (:variable r))
       (str (:variable r) "=" (/ l (:multiplier r)))
       (and (number? r) (:variable l))
@@ -116,7 +150,7 @@ Now solves [these](https://www.khanacademy.org/math/algebra/one-variable-linear-
       (number? l) (str (variable r) "=" (round (- l (number r))))
       :else (eq-ast s))))
 
-(solve "k/1.5=3")
+(solve "-11b+7=40")
 ```
 
 <details id="com.nextjournal.article">
@@ -126,8 +160,8 @@ Now solves [these](https://www.khanacademy.org/math/algebra/one-variable-linear-
 {:nodes
  {"2be60a04-27e9-434f-b34e-05e2ca86fd9e" {:kind "code-listing"},
   "2ff45c01-2fef-45f8-a70d-7d6b02d1b453"
-  {:compute-ref #uuid "95a002f2-0fa3-4bcf-a1b1-92983d79d3d0",
-   :exec-duration 96,
+  {:compute-ref #uuid "f0c056e1-0acc-4ec2-a448-5289b5601b57",
+   :exec-duration 89,
    :kind "code",
    :output-log-lines {},
    :refs (),
@@ -144,8 +178,8 @@ Now solves [these](https://www.khanacademy.org/math/algebra/one-variable-linear-
    :language "clojure",
    :type :nextjournal},
   "a905a30c-4d62-4e08-b74d-e0f308ba1f92"
-  {:compute-ref #uuid "05f70a93-f91a-45e7-8a12-5a4e2e1a3c1b",
-   :exec-duration 484,
+  {:compute-ref #uuid "caea5e0e-79de-4a59-82d4-2c59f198f534",
+   :exec-duration 437,
    :kind "code",
    :output-log-lines {},
    :refs (),
